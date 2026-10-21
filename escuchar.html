@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0a0f1e">
+<title>Te escucho</title>
+<!-- Página segura (https) del mando de Smart TV: el navegador solo deja usar el micrófono en https.
+     Escucha lo que dice la persona y vuelve al mando de la tele (http, red de la casa) con el texto.
+     No guarda ni envía nada a ningún otro lado: solo vuelve a direcciones de la red local. -->
+<style>
+:root{--bg:#070b16;--card:#162039;--txt:#f4f6fb;--dim:#97a3bb;--acc:#4f8cff;--acc2:#6d5dfc}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+body{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:26px;padding:24px 16px;text-align:center;
+  background:radial-gradient(900px 420px at 50% -160px,#1d2d5e 0%,rgba(7,11,22,0) 70%) var(--bg)}
+#mic{width:210px;height:210px;border-radius:50%;border:0;font-size:84px;color:#fff;cursor:pointer;touch-action:manipulation;
+  background:linear-gradient(135deg,var(--acc),var(--acc2));box-shadow:0 10px 40px rgba(79,140,255,.45)}
+#mic.on{background:linear-gradient(135deg,#ef4444,#b91c1c);box-shadow:0 0 0 0 rgba(239,68,68,.6);animation:pulse 1.4s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(239,68,68,.55)}70%{box-shadow:0 0 0 34px rgba(239,68,68,0)}100%{box-shadow:0 0 0 0 rgba(239,68,68,0)}}
+#msg{font-size:28px;font-weight:700;margin:0;line-height:1.3;max-width:440px}
+#heard{font-size:22px;color:var(--dim);margin:0;min-height:30px;max-width:440px}
+#help{font-size:17px;line-height:1.5;color:#fde68a;background:#3a2a0b;border:1px solid #6b4e12;border-radius:16px;padding:12px 14px;text-align:left;max-width:440px}
+#back{font:inherit;font-size:19px;font-weight:600;color:var(--txt);background:var(--card);border:1px solid rgba(255,255,255,.08);border-radius:20px;
+  min-height:60px;padding:0 28px;cursor:pointer}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<button id="mic" aria-label="Hablar">🎤</button>
+<p id="msg">Tocá el micrófono y hablá</p>
+<p id="heard"></p>
+<div id="help" hidden></div>
+<button id="back">↩ Volver al mando</button>
+<script>
+// Compatible con navegadores viejos: sin funciones flecha ni let/const.
+var $ = function (id) { return document.getElementById(id); };
+var m = /[?&]back=([^&]+)/.exec(location.search);
+var back = m ? decodeURIComponent(m[1]) : '';
+// Solo se vuelve a la red de la casa (nunca a otro sitio).
+if (!/^http:\/\/(127\.\d{1,3}\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(:\d{1,5})?$/.test(back)) back = '';
+
+function go(query) {
+  if (!back) { $('msg').textContent = 'Abrí esta página desde el mando de la tele.'; return; }
+  location.replace(back + '/' + (query ? '?' + query : ''));
+}
+$('back').onclick = function () { go(''); };
+
+var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+var rec = null, heard = '', failed = '', tries = 0;
+
+function idle(text) {
+  rec = null;
+  $('mic').className = '';
+  $('msg').textContent = text;
+}
+
+function start() {
+  if (rec) { rec.stop(); return; }   // segundo toque: terminar de escuchar
+  heard = ''; failed = ''; tries++;
+  $('help').hidden = true;
+  $('heard').textContent = '';
+  rec = new SR();
+  rec.lang = 'es-AR'; rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
+  rec.onstart = function () {
+    $('mic').className = 'on';
+    $('msg').textContent = 'Te escucho… hablá ahora';
+    if (navigator.vibrate) navigator.vibrate(30);
+  };
+  rec.onresult = function (e) {
+    var t = '';
+    for (var i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
+    heard = t;
+    $('heard').textContent = '«' + t + '»';
+  };
+  rec.onerror = function (e) { failed = e.error || 'error'; };
+  rec.onend = function () {
+    if (heard) { idle('¡Listo! Se lo paso a la tele…'); go('ask=' + encodeURIComponent(heard)); return; }
+    if (failed === 'not-allowed' || failed === 'service-not-allowed') {
+      // La primera vez puede fallar solo porque falta un toque: se pide tocar. Si vuelve a fallar, falta el permiso.
+      idle(tries > 1 ? 'Falta permitir el micrófono' : 'Tocá el micrófono y hablá');
+      if (tries > 1) {
+        $('help').innerHTML = 'Tocá el candado 🔒 (o los tres puntos ⋮) arriba, entrá a <b>Permisos</b> y activá el <b>Micrófono</b>. Después tocá el micrófono grande.';
+        $('help').hidden = false;
+      }
+      return;
+    }
+    if (failed === 'audio-capture') { idle('El celular no encuentra el micrófono'); return; }
+    if (failed === 'network') { idle('Sin internet en el celular. Probá de nuevo.'); return; }
+    idle('No te escuché. Tocá el micrófono y hablá.');
+  };
+  try { rec.start(); } catch (x) { idle('Tocá el micrófono y hablá'); }
+}
+
+$('mic').onclick = start;
+if (!SR) go('type=1');   // este navegador no tiene reconocimiento de voz: dictado del teclado en el mando
+else start();            // empieza a escuchar solo; si el navegador pide un toque, queda el botón grande
+</script>
+</body>
+</html>
